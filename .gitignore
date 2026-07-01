@@ -1,0 +1,4 @@
+/portkill
+/dist/
+*.test
+*.out
