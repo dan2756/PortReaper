@@ -11,19 +11,24 @@ const usage = `portkill - show and kill whatever is listening on a port
 
 usage:
   portkill [flags] PORT
+  portkill --list [PORT]
 
 Shows the processes listening on TCP port PORT, then asks before sending
 them SIGTERM.
 
 flags:
   -y, --yes       don't ask for confirmation
+  -l, --list      list all listening ports instead of killing anything
+      --json      print JSON; with a PORT, shows the listeners and exits
   -h, --help      show this help
   -V, --version   print the version
 `
 
 type options struct {
-	port    int
+	port    int // 0 when listing everything
 	yes     bool
+	list    bool
+	json    bool
 	help    bool
 	version bool
 }
@@ -37,6 +42,8 @@ type flagSpec struct {
 
 var flagSpecs = []flagSpec{
 	{'y', "yes", false, func(o *options, _ string) error { o.yes = true; return nil }},
+	{'l', "list", false, func(o *options, _ string) error { o.list = true; return nil }},
+	{0, "json", false, func(o *options, _ string) error { o.json = true; return nil }},
 	{'h', "help", false, func(o *options, _ string) error { o.help = true; return nil }},
 	{'V', "version", false, func(o *options, _ string) error { o.version = true; return nil }},
 }
@@ -122,6 +129,9 @@ func parseArgs(args []string) (*options, error) {
 	}
 	switch len(positional) {
 	case 0:
+		if o.list {
+			return o, nil
+		}
 		return nil, errors.New("no port given")
 	case 1:
 	default:

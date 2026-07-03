@@ -45,6 +45,11 @@ func main() {
 		interactive: term.IsTerminal(int(os.Stdin.Fd())),
 		kill:        syscall.Kill,
 	}
+	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
+		if w, _, err := term.GetSize(fd); err == nil {
+			a.width = w
+		}
+	}
 	os.Exit(a.run(os.Args[1:]))
 }
 
@@ -54,6 +59,7 @@ type app struct {
 	stdout      io.Writer
 	stderr      io.Writer
 	interactive bool // stdin is a terminal we can prompt on
+	width       int  // terminal width for tables; 0 when stdout isn't a terminal
 	kill        func(pid int, sig syscall.Signal) error
 }
 
@@ -82,6 +88,11 @@ func (a *app) run(args []string) int {
 		a.errorf("%s: %v", a.backend.Name(), err)
 		return exitUsage
 	}
+	all = sortListeners(all)
+	if opts.list && opts.port == 0 {
+		return a.show(all, opts, exitOK)
+	}
+
 	var found []sockets.Listener
 	for _, l := range all {
 		if l.Port == opts.port {
@@ -89,10 +100,19 @@ func (a *app) run(args []string) int {
 		}
 	}
 	if len(found) == 0 {
+		if opts.json {
+			printJSON(a.stdout, found)
+		}
 		a.errorf("nothing listening on port %d", opts.port)
+		if opts.list {
+			return exitOK
+		}
 		return exitNotFound
 	}
-	printTable(a.stdout, found)
+	if opts.list || opts.json {
+		return a.show(found, opts, exitOK)
+	}
+	printTable(a.stdout, found, a.width)
 
 	targets := uniqueProcs(found)
 	if len(targets) == 0 {
@@ -124,6 +144,23 @@ func (a *app) run(args []string) int {
 			a.errorf("kill %d (%s): %v", t.PID, t.Name, err)
 			code = exitFailed
 		}
+	}
+	return code
+}
+
+// show prints listeners without killing anything.
+func (a *app) show(ls []sockets.Listener, opts *options, code int) int {
+	if opts.json {
+		if err := printJSON(a.stdout, ls); err != nil {
+			a.errorf("%v", err)
+			return exitUsage
+		}
+		return code
+	}
+	if opts.list {
+		printList(a.stdout, ls, a.width)
+	} else {
+		printTable(a.stdout, ls, a.width)
 	}
 	return code
 }
