@@ -28,12 +28,15 @@ func (p *Proc) Name() string { return "/proc" }
 type procTable struct {
 	file     string
 	proto    string
-	optional bool // tcp6 is missing when IPv6 is disabled
+	udp      bool
+	optional bool // the IPv6 tables are missing when IPv6 is disabled
 }
 
 var procTables = []procTable{
-	{"net/tcp", "tcp", false},
-	{"net/tcp6", "tcp6", true},
+	{"net/tcp", "tcp", false, false},
+	{"net/tcp6", "tcp6", false, true},
+	{"net/udp", "udp", true, false},
+	{"net/udp6", "udp6", true, true},
 }
 
 type tableSocket struct {
@@ -42,11 +45,14 @@ type tableSocket struct {
 }
 
 // Listeners implements Backend.
-func (p *Proc) Listeners() ([]Listener, error) {
+func (p *Proc) Listeners(opts Options) ([]Listener, error) {
 	var socks []tableSocket
 	want := make(map[uint64]bool)
 	for _, t := range procTables {
-		ss, err := p.readTable(t.file)
+		if t.udp && !opts.UDP {
+			continue
+		}
+		ss, err := p.readTable(t.file, t.udp)
 		if err != nil {
 			if t.optional && errors.Is(err, fs.ErrNotExist) {
 				continue
@@ -121,13 +127,13 @@ func (p *Proc) order() binary.ByteOrder {
 	return p.Order
 }
 
-func (p *Proc) readTable(name string) ([]procSocket, error) {
+func (p *Proc) readTable(name string, udp bool) ([]procSocket, error) {
 	f, err := os.Open(filepath.Join(p.root(), name))
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	ss, err := parseProcNet(f, p.order())
+	ss, err := parseProcNet(f, udp, p.order())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", f.Name(), err)
 	}

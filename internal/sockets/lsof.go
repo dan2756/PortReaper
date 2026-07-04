@@ -24,7 +24,7 @@ func (l *Lsof) Name() string { return "lsof" }
 const lsofFields = "pcLnuR"
 
 // Listeners implements Backend.
-func (l *Lsof) Listeners() ([]Listener, error) {
+func (l *Lsof) Listeners(opts Options) ([]Listener, error) {
 	out, err := l.run("-iTCP", "-sTCP:LISTEN")
 	if err != nil {
 		return nil, err
@@ -32,6 +32,18 @@ func (l *Lsof) Listeners() ([]Listener, error) {
 	ls, err := parseLsof(bytes.NewReader(out), "tcp")
 	if err != nil {
 		return nil, err
+	}
+	if opts.UDP {
+		// UDP has no LISTEN state; parseLsof drops connected sockets.
+		out, err := l.run("-iUDP")
+		if err != nil {
+			return nil, err
+		}
+		us, err := parseLsof(bytes.NewReader(out), "udp")
+		if err != nil {
+			return nil, err
+		}
+		ls = append(ls, us...)
 	}
 	addCommandLines(ls)
 	return ls, nil

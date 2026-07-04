@@ -11,20 +11,25 @@ import (
 	"strings"
 )
 
-// tcpListen is TCP_LISTEN from include/net/tcp_states.h.
-const tcpListen = 0x0A
+// Socket states from include/net/tcp_states.h. UDP sockets reuse them:
+// an unconnected UDP socket is in TCP_CLOSE.
+const (
+	tcpListen = 0x0A
+	tcpClose  = 0x07
+)
 
-// procSocket is one row of /proc/net/tcp or /proc/net/tcp6.
+// procSocket is one row of /proc/net/{tcp,tcp6,udp,udp6}.
 type procSocket struct {
 	addr  netip.AddrPort
 	uid   int
 	inode uint64
 }
 
-// parseProcNet reads a /proc/net/tcp or /proc/net/tcp6 table and returns the
-// sockets in LISTEN state. order is the byte order the kernel used when it
-// printed the addresses, which is the host's.
-func parseProcNet(r io.Reader, order binary.ByteOrder) ([]procSocket, error) {
+// parseProcNet reads a /proc/net socket table and returns the listening
+// sockets: TCP sockets in LISTEN state when udp is false, unconnected UDP
+// sockets bound to a port when it is true. order is the byte order the kernel
+// used when it printed the addresses, which is the host's.
+func parseProcNet(r io.Reader, udp bool, order binary.ByteOrder) ([]procSocket, error) {
 	var out []procSocket
 	sc := bufio.NewScanner(r)
 	line := 0
@@ -45,12 +50,21 @@ func parseProcNet(r io.Reader, order binary.ByteOrder) ([]procSocket, error) {
 		if err != nil {
 			return nil, fmt.Errorf("line %d: bad state %q", line, f[3])
 		}
-		if state != tcpListen {
+		if (!udp && state != tcpListen) || (udp && state != tcpClose) {
 			continue
 		}
 		addr, err := parseHexAddrPort(f[1], order)
 		if err != nil {
 			return nil, fmt.Errorf("line %d: %v", line, err)
+		}
+		if udp {
+			remote, err := parseHexAddrPort(f[2], order)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: %v", line, err)
+			}
+			if remote.Port() != 0 || addr.Port() == 0 {
+				continue // connected, or not bound to a port yet
+			}
 		}
 		uid, err := strconv.Atoi(f[7])
 		if err != nil {

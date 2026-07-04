@@ -71,7 +71,7 @@ func (a *app) run(args []string) int {
 	opts, err := parseArgs(args)
 	if err != nil {
 		a.errorf("%v", err)
-		fmt.Fprintln(a.stderr, "usage: portkill [flags] PORT (see portkill --help)")
+		fmt.Fprintln(a.stderr, "usage: portkill [flags] PORT... (see portkill --help)")
 		return exitUsage
 	}
 	if opts.help {
@@ -83,27 +83,16 @@ func (a *app) run(args []string) int {
 		return exitOK
 	}
 
-	all, err := a.backend.Listeners()
+	found, err := a.find(opts)
 	if err != nil {
 		a.errorf("%s: %v", a.backend.Name(), err)
 		return exitUsage
 	}
-	all = sortListeners(all)
-	if opts.list && opts.port == 0 {
-		return a.show(all, opts, exitOK)
-	}
-
-	var found []sockets.Listener
-	for _, l := range all {
-		if l.Port == opts.port {
-			found = append(found, l)
-		}
-	}
-	if len(found) == 0 {
+	if len(found) == 0 && len(opts.ports) > 0 {
 		if opts.json {
 			printJSON(a.stdout, found)
 		}
-		a.errorf("nothing listening on port %d", opts.port)
+		a.errorf("nothing listening on %s", describePorts(opts.ports))
 		if opts.list {
 			return exitOK
 		}
@@ -116,7 +105,7 @@ func (a *app) run(args []string) int {
 
 	targets := uniqueProcs(found)
 	if len(targets) == 0 {
-		a.errorf("port %d is held by a process we can't see; try again with sudo", opts.port)
+		a.errorf("%s held by a process we can't see; try again with sudo", isAre(portsOf(found)))
 		return exitFailed
 	}
 	if !opts.yes {
@@ -146,6 +135,47 @@ func (a *app) run(args []string) int {
 		}
 	}
 	return code
+}
+
+// find returns the listeners on the requested ports, or all of them when no
+// ports were given, sorted by port.
+func (a *app) find(opts *options) ([]sockets.Listener, error) {
+	all, err := a.backend.Listeners(sockets.Options{UDP: opts.udp})
+	if err != nil {
+		return nil, err
+	}
+	all = sortListeners(all)
+	if len(opts.ports) == 0 {
+		return all, nil
+	}
+	want := newPortSet(opts.ports)
+	var found []sockets.Listener
+	for _, l := range all {
+		if want[l.Port] {
+			found = append(found, l)
+		}
+	}
+	return found, nil
+}
+
+// portsOf returns the distinct ports of ls, which is sorted by port.
+func portsOf(ls []sockets.Listener) []int {
+	var ports []int
+	for _, l := range ls {
+		if n := len(ports); n == 0 || ports[n-1] != l.Port {
+			ports = append(ports, l.Port)
+		}
+	}
+	return ports
+}
+
+// isAre is describePorts with the right verb: "port 3000 is", "ports 1 and
+// 2 are".
+func isAre(ports []int) string {
+	if len(ports) == 1 {
+		return describePorts(ports) + " is"
+	}
+	return describePorts(ports) + " are"
 }
 
 // show prints listeners without killing anything.

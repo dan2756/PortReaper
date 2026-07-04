@@ -14,7 +14,7 @@ import (
 // A socket shared by several processes (a forking server, say) shows up once
 // per process.
 type Listener struct {
-	Proto   string // "tcp" or "tcp6"
+	Proto   string // "tcp", "tcp6", "udp" or "udp6"
 	Addr    string // local address including the port: "127.0.0.1:3000", "[::]:3000", "*:3000"
 	Port    int
 	PID     int // 0 when the owning process isn't visible to us
@@ -25,12 +25,19 @@ type Listener struct {
 	Command string // full command line where available, otherwise Name
 }
 
+// Options select which sockets a Backend reports.
+type Options struct {
+	// UDP adds unconnected UDP sockets bound to a port, the closest UDP
+	// has to listening.
+	UDP bool
+}
+
 // Backend lists the listening sockets on this machine.
 type Backend interface {
 	// Name identifies the backend in error messages.
 	Name() string
 	// Listeners returns every listening socket the backend can see.
-	Listeners() ([]Listener, error)
+	Listeners(Options) ([]Listener, error)
 }
 
 // userCache resolves numeric uids to user names, remembering the answers.

@@ -22,6 +22,13 @@ kill 1 process? [y/N] y
 sent SIGTERM to 48213 (node)
 ```
 
+Several ports and ranges at once, and UDP with `--udp`:
+
+```
+$ portkill 3000 5173 8000-8010
+$ portkill --udp 5353
+```
+
 List everything that's listening, sorted by port:
 
 ```
@@ -62,16 +69,22 @@ process, without sudo).
 | flag | |
 |---|---|
 | `-y`, `--yes` | don't ask; required when stdin isn't a terminal |
-| `-l`, `--list` | list all listening ports (optionally just PORT) |
-| `--json` | JSON output for `--list` and for showing a port |
+| `-l`, `--list` | list all listening ports (optionally just the given ones) |
+| `--json` | JSON output for `--list` and for showing ports |
+| `-u`, `--udp` | include UDP sockets (unconnected sockets bound to a port) |
+
+A port can be a number (`3000`), a range (`8000-8010`) or a comma-separated
+list of either (`3000,5173`).
 | `-h`, `--help` | show help |
 | `-V`, `--version` | print the version |
 
 ## How it works
 
 On Linux portkill reads the socket tables in `/proc/net/tcp` and
-`/proc/net/tcp6` and matches socket inodes against `/proc/<pid>/fd`. On macOS
-it runs `lsof -nP -iTCP -sTCP:LISTEN -F pcLnuR` and parses the field output.
+`/proc/net/tcp6` (plus `udp` and `udp6` with `--udp`) and matches socket
+inodes against `/proc/<pid>/fd`. On macOS it runs
+`lsof -nP -iTCP -sTCP:LISTEN -F pcLnuR` (and `lsof -nP -iUDP` for UDP), parses
+the field output, and asks `ps` for full command lines.
 
 ## License
 

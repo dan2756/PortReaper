@@ -3,32 +3,34 @@ package main
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
 const usage = `portkill - show and kill whatever is listening on a port
 
 usage:
-  portkill [flags] PORT
-  portkill --list [PORT]
+  portkill [flags] PORT...
+  portkill --list [PORT...]
 
-Shows the processes listening on TCP port PORT, then asks before sending
-them SIGTERM.
+Shows the processes listening on the given TCP ports, then asks before
+sending them SIGTERM. A PORT is a number (3000), a range (8000-8010) or a
+comma-separated list of either.
 
 flags:
   -y, --yes       don't ask for confirmation
   -l, --list      list all listening ports instead of killing anything
-      --json      print JSON; with a PORT, shows the listeners and exits
+      --json      print JSON; with ports, shows the listeners and exits
+  -u, --udp       include UDP sockets
   -h, --help      show this help
   -V, --version   print the version
 `
 
 type options struct {
-	port    int // 0 when listing everything
+	ports   []int // empty when listing everything
 	yes     bool
 	list    bool
 	json    bool
+	udp     bool
 	help    bool
 	version bool
 }
@@ -44,6 +46,7 @@ var flagSpecs = []flagSpec{
 	{'y', "yes", false, func(o *options, _ string) error { o.yes = true; return nil }},
 	{'l', "list", false, func(o *options, _ string) error { o.list = true; return nil }},
 	{0, "json", false, func(o *options, _ string) error { o.json = true; return nil }},
+	{'u', "udp", false, func(o *options, _ string) error { o.udp = true; return nil }},
 	{'h', "help", false, func(o *options, _ string) error { o.help = true; return nil }},
 	{'V', "version", false, func(o *options, _ string) error { o.version = true; return nil }},
 }
@@ -127,28 +130,16 @@ func parseArgs(args []string) (*options, error) {
 	if o.help || o.version {
 		return o, nil
 	}
-	switch len(positional) {
-	case 0:
+	if len(positional) == 0 {
 		if o.list {
 			return o, nil
 		}
 		return nil, errors.New("no port given")
-	case 1:
-	default:
-		return nil, errors.New("only one port at a time")
 	}
-	p, err := parsePort(positional[0])
+	ports, err := parsePorts(positional)
 	if err != nil {
 		return nil, err
 	}
-	o.port = p
+	o.ports = ports
 	return o, nil
-}
-
-func parsePort(s string) (int, error) {
-	n, err := strconv.Atoi(strings.TrimPrefix(s, ":"))
-	if err != nil || n < 1 || n > 65535 {
-		return 0, fmt.Errorf("invalid port %q", s)
-	}
-	return n, nil
 }

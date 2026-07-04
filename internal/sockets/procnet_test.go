@@ -7,14 +7,14 @@ import (
 	"testing"
 )
 
-func readFixture(t *testing.T, name string) []procSocket {
+func readFixture(t *testing.T, name string, udp bool) []procSocket {
 	t.Helper()
 	f, err := os.Open("testdata/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	ss, err := parseProcNet(f, binary.LittleEndian)
+	ss, err := parseProcNet(f, udp, binary.LittleEndian)
 	if err != nil {
 		t.Fatalf("parseProcNet(%s): %v", name, err)
 	}
@@ -22,16 +22,30 @@ func readFixture(t *testing.T, name string) []procSocket {
 }
 
 func TestParseProcNetTCP(t *testing.T) {
-	got := readFixture(t, "proc_net_tcp")
-	want := []struct {
-		addr  string
-		uid   int
-		inode uint64
-	}{
+	checkSockets(t, readFixture(t, "proc_net_tcp", false), []wantSocket{
 		{"127.0.0.53:53", 101, 19873},
 		{"0.0.0.0:22", 0, 22140},
 		{"127.0.0.1:3000", 1000, 418877},
-	}
+	})
+}
+
+func TestParseProcNetUDP(t *testing.T) {
+	// Only unconnected sockets bound to a port count; the DHCP and DNS
+	// client sockets are connected and the last one isn't bound yet.
+	checkSockets(t, readFixture(t, "proc_net_udp", true), []wantSocket{
+		{"127.0.0.53:53", 101, 19872},
+		{"0.0.0.0:5353", 1000, 61220},
+	})
+}
+
+type wantSocket struct {
+	addr  string
+	uid   int
+	inode uint64
+}
+
+func checkSockets(t *testing.T, got []procSocket, want []wantSocket) {
+	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %d listening sockets, want %d: %+v", len(got), len(want), got)
 	}
@@ -53,7 +67,7 @@ func TestParseProcNetErrors(t *testing.T) {
 		"bad port":    "   0: 0100007F:XBB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 1 1\n",
 		"odd length":  "   0: 0100007F00:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 1 1\n",
 	} {
-		if _, err := parseProcNet(strings.NewReader(header+row), binary.LittleEndian); err == nil {
+		if _, err := parseProcNet(strings.NewReader(header+row), false, binary.LittleEndian); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
