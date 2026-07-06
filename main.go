@@ -3,13 +3,13 @@ package main
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"runtime/debug"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/dan2756/portkill/internal/sockets"
 	"golang.org/x/term"
@@ -17,10 +17,10 @@ import (
 
 // Exit codes.
 const (
-	exitOK       = 0 // processes signalled
-	exitNotFound = 1 // nothing listening on the port
+	exitOK       = 0 // processes killed and the ports are free; or nothing to do with --list
+	exitNotFound = 1 // nothing listening on the ports
 	exitUsage    = 2 // bad arguments or the backend failed
-	exitFailed   = 3 // a kill failed
+	exitFailed   = 3 // a kill failed, a port is still busy, or the user said no
 )
 
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
@@ -44,6 +44,7 @@ func main() {
 		stderr:      os.Stderr,
 		interactive: term.IsTerminal(int(os.Stdin.Fd())),
 		kill:        syscall.Kill,
+		poll:        100 * time.Millisecond,
 	}
 	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
 		if w, _, err := term.GetSize(fd); err == nil {
@@ -61,6 +62,7 @@ type app struct {
 	interactive bool // stdin is a terminal we can prompt on
 	width       int  // terminal width for tables; 0 when stdout isn't a terminal
 	kill        func(pid int, sig syscall.Signal) error
+	poll        time.Duration // how often to check whether a port was released
 }
 
 func (a *app) errorf(format string, args ...any) {
@@ -118,23 +120,7 @@ func (a *app) run(args []string) int {
 		}
 	}
 
-	code := exitOK
-	for _, t := range targets {
-		err := a.kill(t.PID, syscall.SIGTERM)
-		switch {
-		case err == nil:
-			fmt.Fprintf(a.stdout, "sent SIGTERM to %d (%s)\n", t.PID, t.Name)
-		case errors.Is(err, syscall.ESRCH):
-			fmt.Fprintf(a.stdout, "%d (%s) already exited\n", t.PID, t.Name)
-		case errors.Is(err, syscall.EPERM):
-			a.errorf("permission denied killing %d (%s, owned by %s); try again with sudo", t.PID, t.Name, t.User)
-			code = exitFailed
-		default:
-			a.errorf("kill %d (%s): %v", t.PID, t.Name, err)
-			code = exitFailed
-		}
-	}
-	return code
+	return a.killAll(found, targets, opts)
 }
 
 // find returns the listeners on the requested ports, or all of them when no
@@ -193,20 +179,6 @@ func (a *app) show(ls []sockets.Listener, opts *options, code int) int {
 		printTable(a.stdout, ls, a.width)
 	}
 	return code
-}
-
-// uniqueProcs returns one entry per visible process, in order of appearance.
-func uniqueProcs(ls []sockets.Listener) []sockets.Listener {
-	seen := map[int]bool{}
-	var out []sockets.Listener
-	for _, l := range ls {
-		if l.PID <= 0 || seen[l.PID] {
-			continue
-		}
-		seen[l.PID] = true
-		out = append(out, l)
-	}
-	return out
 }
 
 func (a *app) confirm(question string) bool {
