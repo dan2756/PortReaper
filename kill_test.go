@@ -20,6 +20,8 @@ type fakeSystem struct {
 	sent      []string     // "pid SIGNAME" in order
 	stubborn  map[int]bool // ignore everything but SIGKILL
 	denied    map[int]bool // kill fails with EPERM
+	euid      int          // who portkill runs as; root unless set
+	self      int          // portkill's own pid
 }
 
 func (f *fakeSystem) Name() string { return "fake" }
@@ -74,6 +76,8 @@ func runFake(t *testing.T, f *fakeSystem, stdin string, interactive bool, args .
 		interactive: interactive,
 		kill:        f.kill,
 		poll:        time.Millisecond,
+		self:        f.self,
+		euid:        f.euid,
 	}
 	code := a.run(args)
 	return result{code, stdout.String(), stderr.String(), f.sent}
@@ -179,6 +183,67 @@ func TestPrompt(t *testing.T) {
 			t.Errorf("answer %q: sent %v", answer, r.sent)
 		}
 	}
+}
+
+func TestRefusesPID1AndSelf(t *testing.T) {
+	initd := node(1, 631)
+	initd.Name, initd.UID, initd.User = "systemd", 0, "root"
+	f := &fakeSystem{listeners: []sockets.Listener{initd, node(4242, 631), node(100, 631)}, self: 4242}
+	runFake(t, f, "", false, "-y", "-w", "20ms", "631").
+		expect(t, exitFailed, []string{"100 SIGTERM"},
+			"refusing to kill pid 1 (systemd)", "refusing to kill portkill itself (pid 4242)",
+			"port 631 is still in use by")
+
+	f = &fakeSystem{listeners: []sockets.Listener{initd}}
+	runFake(t, f, "", false, "-y", "631").expect(t, exitFailed, nil, "refusing to kill pid 1", "no process to kill")
+}
+
+func TestDryRun(t *testing.T) {
+	f := &fakeSystem{listeners: []sockets.Listener{node(100, 3000), node(101, 3000)}}
+	r := runFake(t, f, "", false, "--dry-run", "-f", "3000")
+	r.expect(t, exitOK, nil, "would send SIGTERM to 100 (node)", "would send SIGTERM to 101 (node)", "and SIGKILL")
+	if strings.Contains(r.stderr, "not a terminal") {
+		t.Errorf("--dry-run shouldn't need a terminal:\n%s", r.stderr)
+	}
+
+	f = &fakeSystem{listeners: []sockets.Listener{node(100, 3000)}}
+	runFake(t, f, "", false, "-n9", "3000").expect(t, exitOK, nil, "would send SIGKILL to 100 (node)")
+}
+
+func TestWarnsAboutOtherUsers(t *testing.T) {
+	sshd := node(812, 22)
+	sshd.Name, sshd.UID, sshd.User = "sshd", 0, "root"
+	f := &fakeSystem{listeners: []sockets.Listener{sshd, node(100, 3000)}, euid: 1000}
+	r := runFake(t, f, "", false, "-n", "22", "3000")
+	r.expect(t, exitOK, nil, "warning: 812 (sshd) belongs to root; you'll probably need sudo")
+	if strings.Contains(r.stderr, "100 (node) belongs") {
+		t.Errorf("own process flagged:\n%s", r.stderr)
+	}
+
+	// root can signal anything, so there's nothing to warn about.
+	f = &fakeSystem{listeners: []sockets.Listener{sshd}}
+	if r := runFake(t, f, "", false, "-n", "22"); strings.Contains(r.stderr, "warning") {
+		t.Errorf("unexpected warning for root:\n%s", r.stderr)
+	}
+}
+
+func TestHiddenOwner(t *testing.T) {
+	hidden := sockets.Listener{Proto: "tcp", Addr: "0.0.0.0:22", Port: 22, UID: 0, User: "root"}
+	f := &fakeSystem{listeners: []sockets.Listener{hidden}, euid: 1000}
+	r := runFake(t, f, "", false, "-y", "22")
+	r.expect(t, exitFailed, nil, "port 22 is held by a process of root that only root can see; try again with sudo")
+	if !strings.Contains(r.stdout, "(owner not visible)") {
+		t.Errorf("table should mark the hidden owner:\n%s", r.stdout)
+	}
+
+	f = &fakeSystem{listeners: []sockets.Listener{hidden}}
+	r = runFake(t, f, "", false, "-y", "22")
+	if strings.Contains(r.stderr, "sudo") || !strings.Contains(r.stderr, "another pid namespace") {
+		t.Errorf("as root, don't suggest sudo:\n%s", r.stderr)
+	}
+
+	f = &fakeSystem{listeners: []sockets.Listener{hidden, node(100, 3000)}, euid: 1000}
+	runFake(t, f, "", false, "--list").expect(t, exitOK, nil, "run with sudo to see who owns them")
 }
 
 func TestParseSignal(t *testing.T) {

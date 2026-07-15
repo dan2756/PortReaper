@@ -20,6 +20,10 @@ type Lsof struct {
 // Name implements Backend.
 func (l *Lsof) Name() string { return "lsof" }
 
+// HidesOtherUsers reports that, run without root, lsof can only see the
+// sockets of the current user's processes.
+func (l *Lsof) HidesOtherUsers() bool { return true }
+
 // lsofFields asks for pid, command, login, name, uid and parent pid.
 const lsofFields = "pcLnuR"
 

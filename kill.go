@@ -52,6 +52,7 @@ func signalName(sig syscall.Signal) string {
 }
 
 // uniqueProcs returns one entry per visible process, in order of appearance.
+// Processes portkill can't see (pid 0) are left out.
 func uniqueProcs(ls []sockets.Listener) []sockets.Listener {
 	seen := map[int]bool{}
 	var out []sockets.Listener
@@ -61,6 +62,47 @@ func uniqueProcs(ls []sockets.Listener) []sockets.Listener {
 		}
 		seen[l.PID] = true
 		out = append(out, l)
+	}
+	return out
+}
+
+// pickTargets returns the processes portkill may signal, one per pid, and
+// explains the ones it won't touch: pid 1, itself, and sockets whose owner it
+// can't see. It warns about processes that belong to someone else.
+func (a *app) pickTargets(found []sockets.Listener) []sockets.Listener {
+	var out []sockets.Listener
+	for _, p := range uniqueProcs(found) {
+		switch {
+		case p.PID == 1:
+			a.errorf("refusing to kill pid 1 (%s); if it holds port %d for a socket-activated service, stop that service instead",
+				orDash(p.Name), p.Port)
+			continue
+		case p.PID == a.self:
+			a.errorf("refusing to kill portkill itself (pid %d)", p.PID)
+			continue
+		}
+		if a.euid != 0 && p.UID >= 0 && p.UID != a.euid {
+			a.warnf("%d (%s) belongs to %s; you'll probably need sudo", p.PID, p.Name, orDash(p.User))
+		}
+		out = append(out, p)
+	}
+
+	var hidden []sockets.Listener
+	for _, l := range found {
+		if l.PID <= 0 {
+			hidden = append(hidden, l)
+		}
+	}
+	if ports := portsOf(hidden); len(ports) > 0 {
+		owner := "another user"
+		if u := hidden[0].User; u != "" {
+			owner = u
+		}
+		if a.euid != 0 {
+			a.warnf("%s held by a process of %s that only root can see; try again with sudo", isAre(ports), owner)
+		} else {
+			a.warnf("%s held by a process portkill can't see (owned by %s); it may be in another pid namespace", isAre(ports), owner)
+		}
 	}
 	return out
 }

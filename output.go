@@ -167,7 +167,7 @@ func command(l sockets.Listener) string {
 	case l.Name != "":
 		return l.Name
 	case l.PID <= 0:
-		return "(not visible; try sudo)"
+		return "(owner not visible)"
 	}
 	return "-"
 }

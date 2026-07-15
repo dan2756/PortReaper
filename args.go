@@ -25,6 +25,7 @@ flags:
   -9                 same as --signal KILL
   -w, --wait DUR     how long to wait for the ports to be free (default 3s; 0 = don't)
   -f, --force        send SIGKILL to processes still holding a port after --wait
+  -n, --dry-run      show what would be killed, but don't
   -l, --list         list all listening ports instead of killing anything
       --json         print JSON; with ports, shows the listeners and exits
   -u, --udp          include UDP sockets
@@ -47,6 +48,7 @@ type options struct {
 	signal  syscall.Signal
 	wait    time.Duration
 	force   bool
+	dryRun  bool
 	help    bool
 	version bool
 }
@@ -64,6 +66,7 @@ var flagSpecs = []flagSpec{
 	{'9', "", false, func(o *options, _ string) error { o.signal = syscall.SIGKILL; return nil }},
 	{'w', "wait", true, func(o *options, v string) (err error) { o.wait, err = parseWait(v); return err }},
 	{'f', "force", false, func(o *options, _ string) error { o.force = true; return nil }},
+	{'n', "dry-run", false, func(o *options, _ string) error { o.dryRun = true; return nil }},
 	{'l', "list", false, func(o *options, _ string) error { o.list = true; return nil }},
 	{0, "json", false, func(o *options, _ string) error { o.json = true; return nil }},
 	{'u', "udp", false, func(o *options, _ string) error { o.udp = true; return nil }},

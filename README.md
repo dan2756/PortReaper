@@ -88,6 +88,7 @@ process, without sudo).
 | `-9` | same as `--signal KILL` |
 | `-w`, `--wait DUR` | how long to wait for the ports to be free: `3s` (default), `500ms`, `10`; `0` sends the signal and exits |
 | `-f`, `--force` | SIGKILL whatever still holds a port after `--wait` |
+| `-n`, `--dry-run` | show what would be killed, but don't |
 | `-l`, `--list` | list all listening ports (optionally just the given ones) |
 | `--json` | JSON output for `--list` and for showing ports |
 | `-u`, `--udp` | include UDP sockets (unconnected sockets bound to a port) |
@@ -96,6 +97,27 @@ A port can be a number (`3000`), a range (`8000-8010`) or a comma-separated
 list of either (`3000,5173`).
 | `-h`, `--help` | show help |
 | `-V`, `--version` | print the version |
+
+## Safety
+
+- portkill asks before killing anything. Without a terminal to ask on it
+  refuses instead of hanging; pass `-y` in scripts.
+- It never signals pid 1 (`systemd` or `launchd` holding a socket for a
+  socket-activated service; stop the service instead) or itself.
+- It warns when a process belongs to another user, and when a signal fails
+  with a permission error it says so and suggests sudo.
+- Without root you can't see who owns other users' sockets. On Linux the
+  socket still shows up, marked `(owner not visible)`; on macOS lsof doesn't
+  list it at all.
+
+```
+$ portkill 22
+PID  USER  PROTO  ADDRESS     COMMAND
+-    root  tcp    0.0.0.0:22  (owner not visible)
+-    root  tcp6   [::]:22     (owner not visible)
+portkill: warning: port 22 is held by a process of root that only root can see; try again with sudo
+portkill: no process to kill
+```
 
 ## Exit status
 

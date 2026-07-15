@@ -45,6 +45,8 @@ func main() {
 		interactive: term.IsTerminal(int(os.Stdin.Fd())),
 		kill:        syscall.Kill,
 		poll:        100 * time.Millisecond,
+		self:        os.Getpid(),
+		euid:        os.Geteuid(),
 	}
 	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
 		if w, _, err := term.GetSize(fd); err == nil {
@@ -63,10 +65,16 @@ type app struct {
 	width       int  // terminal width for tables; 0 when stdout isn't a terminal
 	kill        func(pid int, sig syscall.Signal) error
 	poll        time.Duration // how often to check whether a port was released
+	self        int           // our own pid, which we never signal
+	euid        int
 }
 
 func (a *app) errorf(format string, args ...any) {
 	fmt.Fprintf(a.stderr, "portkill: "+format+"\n", args...)
+}
+
+func (a *app) warnf(format string, args ...any) {
+	fmt.Fprintf(a.stderr, "portkill: warning: "+format+"\n", args...)
 }
 
 func (a *app) run(args []string) int {
@@ -94,7 +102,11 @@ func (a *app) run(args []string) int {
 		if opts.json {
 			printJSON(a.stdout, found)
 		}
-		a.errorf("nothing listening on %s", describePorts(opts.ports))
+		hint := ""
+		if h, ok := a.backend.(interface{ HidesOtherUsers() bool }); ok && h.HidesOtherUsers() && a.euid != 0 {
+			hint = " (other users' processes are only visible with sudo)"
+		}
+		a.errorf("nothing listening on %s%s", describePorts(opts.ports), hint)
 		if opts.list {
 			return exitOK
 		}
@@ -105,10 +117,19 @@ func (a *app) run(args []string) int {
 	}
 	printTable(a.stdout, found, a.width)
 
-	targets := uniqueProcs(found)
+	targets := a.pickTargets(found)
 	if len(targets) == 0 {
-		a.errorf("%s held by a process we can't see; try again with sudo", isAre(portsOf(found)))
+		a.errorf("no process to kill")
 		return exitFailed
+	}
+	if opts.dryRun {
+		for _, t := range targets {
+			fmt.Fprintf(a.stdout, "would send %s to %d (%s)\n", signalName(opts.signal), t.PID, t.Name)
+		}
+		if opts.force && opts.signal != syscall.SIGKILL {
+			fmt.Fprintf(a.stdout, "and SIGKILL to any that still hold a port after %v\n", opts.wait)
+		}
+		return exitOK
 	}
 	if !opts.yes {
 		if !a.interactive {
@@ -177,6 +198,14 @@ func (a *app) show(ls []sockets.Listener, opts *options, code int) int {
 		printList(a.stdout, ls, a.width)
 	} else {
 		printTable(a.stdout, ls, a.width)
+	}
+	if a.euid != 0 {
+		for _, l := range ls {
+			if l.PID <= 0 {
+				a.warnf("some sockets belong to other users' processes; run with sudo to see who owns them")
+				break
+			}
+		}
 	}
 	return code
 }
