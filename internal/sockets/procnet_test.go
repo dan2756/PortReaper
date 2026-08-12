@@ -38,6 +38,23 @@ func TestParseProcNetUDP(t *testing.T) {
 	})
 }
 
+func TestParseProcNetTCP6(t *testing.T) {
+	checkSockets(t, readFixture(t, "proc_net_tcp6", false), []wantSocket{
+		{"[::]:22", 0, 22142},
+		{"[::1]:8080", 1000, 61002},
+		{"[::ffff:127.0.0.1]:5173", 1000, 61177},
+		{"[2001:db8::1]:443", 33, 70410},
+		{"[fe80::5054:ff:fe12:3456]:9090", 1000, 70533},
+	})
+}
+
+func TestParseProcNetUDP6(t *testing.T) {
+	checkSockets(t, readFixture(t, "proc_net_udp6", true), []wantSocket{
+		{"[::]:5353", 107, 21002},
+		{"[fe80::5054:ff:fe12:3456]:546", 0, 19077},
+	})
+}
+
 type wantSocket struct {
 	addr  string
 	uid   int
@@ -74,13 +91,20 @@ func TestParseProcNetErrors(t *testing.T) {
 }
 
 func TestParseHexAddrPortBigEndian(t *testing.T) {
-	// On a big-endian host the kernel prints 127.0.0.1 as 7F000001.
-	ap, err := parseHexAddrPort("7F000001:0BB8", binary.BigEndian)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ap.String() != "127.0.0.1:3000" {
-		t.Errorf("got %s, want 127.0.0.1:3000", ap)
+	// On a big-endian host (s390x) the words come out in network order.
+	for in, want := range map[string]string{
+		"7F000001:0BB8":                         "127.0.0.1:3000",
+		"00000000000000000000000000000001:1F90": "[::1]:8080",
+		"20010DB8000000000000000000000001:01BB": "[2001:db8::1]:443",
+	} {
+		ap, err := parseHexAddrPort(in, binary.BigEndian)
+		if err != nil {
+			t.Errorf("%s: %v", in, err)
+			continue
+		}
+		if ap.String() != want {
+			t.Errorf("parseHexAddrPort(%s) = %s, want %s", in, ap, want)
+		}
 	}
 }
 

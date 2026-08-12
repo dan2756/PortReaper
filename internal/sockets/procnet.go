@@ -102,7 +102,13 @@ func parseHexAddrPort(s string, order binary.ByteOrder) (netip.AddrPort, error) 
 		order.PutUint32(a[:], binary.BigEndian.Uint32(b))
 		addr = netip.AddrFrom4(a)
 	case 16:
-		addr = netip.AddrFrom16([16]byte(b))
+		// Four 32-bit words, each in host order: on little-endian
+		// machines ::1 is printed as 00000000000000000000000001000000.
+		var a [16]byte
+		for i := 0; i < 16; i += 4 {
+			order.PutUint32(a[i:], binary.BigEndian.Uint32(b[i:i+4]))
+		}
+		addr = netip.AddrFrom16(a)
 	default:
 		return netip.AddrPort{}, fmt.Errorf("bad address length in %q", s)
 	}
