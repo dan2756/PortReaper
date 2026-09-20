@@ -6,13 +6,18 @@
 package sockets
 
 import (
+	"fmt"
 	"os/user"
 	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Listener is a listening socket together with the process that holds it.
 // A socket shared by several processes (a forking server, say) shows up once
-// per process.
+// per process. Name and Command are chosen by the process itself, so
+// backends escape whatever in them doesn't print (see printable).
 type Listener struct {
 	Proto   string // "tcp", "tcp6", "udp" or "udp6"
 	Addr    string // local address including the port: "127.0.0.1:3000", "[::]:3000", "*:3000"
@@ -56,4 +61,26 @@ func (c userCache) name(uid int) string {
 	}
 	c[uid] = n
 	return n
+}
+
+// printable escapes control characters, invalid UTF-8 and other runes that
+// don't print ("\n", "\x1b", "\u202e"), so a process can't add lines to
+// portkill's output or send escape sequences to the terminal through its
+// name or command line. ps and lsof do the same.
+func printable(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n == 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case !unicode.IsGraphic(r):
+			q := strconv.QuoteRuneToGraphic(r)
+			b.WriteString(q[1 : len(q)-1])
+		default:
+			b.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
 }

@@ -1,6 +1,13 @@
 package sockets
 
-// Default returns the backend for this platform: /proc on Linux.
+import "os/exec"
+
+// Default returns the backend for this platform: /proc on Linux, falling
+// back to lsof when /proc shows nothing and lsof is installed.
 func Default() Backend {
-	return &Proc{}
+	b := &Fallback{Primary: &Proc{}}
+	if path, err := exec.LookPath("lsof"); err == nil {
+		b.Secondary = &Lsof{Path: path}
+	}
+	return b
 }

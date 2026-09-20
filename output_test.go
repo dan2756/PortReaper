@@ -67,6 +67,44 @@ func TestRenderTableTruncatesLastColumn(t *testing.T) {
 	}
 }
 
+func TestRenderTableWideCharacters(t *testing.T) {
+	var b bytes.Buffer
+	rows := [][]string{
+		{"48213", "dj", "node /home/dj/プロジェクト/日本語のサーバー/node_modules/.bin/vite --port 3000"},
+		{"7", "ユーザー", "sshd"},
+	}
+	renderTable(&b, []string{"PID", "USER", "COMMAND"}, rows, 40)
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	want := []string{
+		"PID    USER      COMMAND",
+		"48213  dj        node /home/dj/プロジェ…",
+		"7      ユーザー  sshd",
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	}
+	for _, l := range lines {
+		if n := displayWidth(l); n > 40 {
+			t.Errorf("line %q is %d columns wide", l, n)
+		}
+	}
+}
+
+func TestDisplayWidth(t *testing.T) {
+	for s, want := range map[string]int{
+		"node":                     4,
+		"日本語":                      6,
+		"\uff46\uff55\uff4c\uff4c": 8, // fullwidth "full"
+		"cafe\u0301":               4, // e + combining acute accent
+		"한국어 server":               13,
+		"\U0001f680 launch":        9,
+	} {
+		if got := displayWidth(s); got != want {
+			t.Errorf("displayWidth(%q) = %d, want %d", s, got, want)
+		}
+	}
+}
+
 func TestPrintJSON(t *testing.T) {
 	var b bytes.Buffer
 	err := printJSON(&b, []sockets.Listener{

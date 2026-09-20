@@ -111,7 +111,7 @@ func parseLsof(r io.Reader, proto string) ([]Listener, error) {
 		case 'R':
 			cur.PPID, _ = strconv.Atoi(val)
 		case 'c':
-			cur.Name = val
+			cur.Name = printable(val)
 		case 'L':
 			cur.User = val
 		case 'u':
@@ -197,7 +197,7 @@ func parsePs(b []byte) map[int]string {
 		if err != nil {
 			continue
 		}
-		cmds[n] = strings.TrimSpace(cmd)
+		cmds[n] = printable(strings.TrimSpace(cmd))
 	}
 	return cmds
 }

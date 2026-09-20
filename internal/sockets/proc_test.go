@@ -3,6 +3,7 @@ package sockets
 import (
 	"encoding/binary"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,30 @@ func TestProcBackend(t *testing.T) {
 		if l.UID == 0 && l.User != "root" {
 			t.Errorf("uid 0 should resolve to root, got %q", l.User)
 		}
+	}
+}
+
+func TestProcDropsClosedSockets(t *testing.T) {
+	p := &Proc{Root: fakeProc(t), Order: binary.LittleEndian}
+	socks, err := p.readTables(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[uint64]bool{}
+	for _, s := range socks {
+		want[s.inode] = true
+	}
+	owners := p.socketOwners(want)
+	// A socket from an earlier read whose process has exited since: it has
+	// no owner and is no longer in the table. sshd's socket has no visible
+	// owner either, but it's still there.
+	gone := tableSocket{procSocket{addr: netip.MustParseAddrPort("127.0.0.1:41220"), inode: 777}, "tcp"}
+	var got []string
+	for _, s := range p.dropClosed(append(socks, gone), owners, Options{}) {
+		got = append(got, s.addr.String())
+	}
+	if g, w := strings.Join(got, " "), "127.0.0.53:53 0.0.0.0:22 127.0.0.1:3000"; g != w {
+		t.Errorf("kept %s, want %s", g, w)
 	}
 }
 

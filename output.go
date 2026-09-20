@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
+	"unicode"
 
 	"github.com/dan2756/portkill/internal/sockets"
 )
@@ -32,12 +32,13 @@ func printList(w io.Writer, ls []sockets.Listener, width int) {
 }
 
 // renderTable prints left-aligned columns separated by two spaces. When width
-// is positive the last column is cut so that lines fit in it.
+// is positive the last column is cut so that lines fit in that many terminal
+// columns.
 func renderTable(w io.Writer, header []string, rows [][]string, width int) {
 	widths := make([]int, len(header))
 	for _, r := range append([][]string{header}, rows...) {
 		for i, cell := range r {
-			widths[i] = max(widths[i], utf8.RuneCountInString(cell))
+			widths[i] = max(widths[i], displayWidth(cell))
 		}
 	}
 	last := len(header) - 1
@@ -61,18 +62,75 @@ func renderTable(w io.Writer, header []string, rows [][]string, width int) {
 				break
 			}
 			b.WriteString(cell)
-			b.WriteString(strings.Repeat(" ", widths[i]-utf8.RuneCountInString(cell)+2))
+			b.WriteString(strings.Repeat(" ", widths[i]-displayWidth(cell)+2))
 		}
 		fmt.Fprintln(w, b.String())
 	}
 }
 
+// truncate cuts s to at most n terminal columns, ending it with an ellipsis
+// when something was cut.
 func truncate(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
+	if displayWidth(s) <= n {
 		return s
 	}
-	r := []rune(s)
-	return string(r[:n-1]) + "…"
+	w := 0
+	for i, r := range s {
+		if w += runeWidth(r); w > n-1 {
+			return s[:i] + "…"
+		}
+	}
+	return s
+}
+
+// displayWidth is the number of terminal columns s takes up.
+func displayWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		n += runeWidth(r)
+	}
+	return n
+}
+
+// runeWidth is the number of terminal columns r takes up: two for East Asian
+// wide and fullwidth characters, none for combining marks, one otherwise.
+func runeWidth(r rune) int {
+	switch {
+	case unicode.In(r, unicode.Mn, unicode.Me):
+		return 0
+	case unicode.Is(wide, r):
+		return 2
+	}
+	return 1
+}
+
+// wide holds the blocks that terminals draw two columns wide: CJK, Hangul,
+// fullwidth forms and emoji.
+var wide = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{Lo: 0x1100, Hi: 0x115f, Stride: 1},
+		{Lo: 0x2329, Hi: 0x232a, Stride: 1},
+		{Lo: 0x2e80, Hi: 0x303e, Stride: 1},
+		{Lo: 0x3041, Hi: 0x33ff, Stride: 1},
+		{Lo: 0x3400, Hi: 0x4dbf, Stride: 1},
+		{Lo: 0x4e00, Hi: 0x9fff, Stride: 1},
+		{Lo: 0xa000, Hi: 0xa4cf, Stride: 1},
+		{Lo: 0xa960, Hi: 0xa97f, Stride: 1},
+		{Lo: 0xac00, Hi: 0xd7a3, Stride: 1},
+		{Lo: 0xf900, Hi: 0xfaff, Stride: 1},
+		{Lo: 0xfe10, Hi: 0xfe19, Stride: 1},
+		{Lo: 0xfe30, Hi: 0xfe6f, Stride: 1},
+		{Lo: 0xff00, Hi: 0xff60, Stride: 1},
+		{Lo: 0xffe0, Hi: 0xffe6, Stride: 1},
+	},
+	R32: []unicode.Range32{
+		{Lo: 0x1b000, Hi: 0x1b2ff, Stride: 1},
+		{Lo: 0x1f300, Hi: 0x1f64f, Stride: 1},
+		{Lo: 0x1f680, Hi: 0x1f6ff, Stride: 1},
+		{Lo: 0x1f900, Hi: 0x1f9ff, Stride: 1},
+		{Lo: 0x20000, Hi: 0x2fffd, Stride: 1},
+		{Lo: 0x30000, Hi: 0x3fffd, Stride: 1},
+	},
 }
 
 type jsonListener struct {

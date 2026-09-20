@@ -56,7 +56,9 @@ PORT  PROTO  ADDRESS         PID    USER      COMMAND
 ```
 
 Long command lines are cut to the terminal width; pipe the output to see
-them in full.
+them in full. Control characters in a process's name or command line are
+shown escaped (`\n`, `\x1b`), here and in `--json`, so a process can't
+garble the table or send escape sequences to your terminal.
 
 `--json` prints the same information for scripts. With a port it only shows
 the listeners, it never kills:
@@ -81,6 +83,21 @@ $ portkill --json 3000
 `pid` is `null` when the socket's owner isn't visible to you (another user's
 process, without sudo).
 
+`--dry-run` goes one step further than showing: it prints exactly what would
+be signalled, after the pid 1 and other-user checks below.
+
+```
+$ portkill -n -f 3000 5173
+PID    USER  PROTO  ADDRESS         COMMAND
+48213  dj    tcp    127.0.0.1:3000  node /home/dj/app/node_modules/.bin/vite --port 3000
+48377  dj    tcp6   [::1]:5173      node /home/dj/site/node_modules/.bin/astro dev
+would send SIGTERM to 48213 (node)
+would send SIGTERM to 48377 (node)
+and SIGKILL to any that still hold a port after 3s
+```
+
+## Flags
+
 | flag | |
 |---|---|
 | `-y`, `--yes` | don't ask; required when stdin isn't a terminal |
@@ -92,11 +109,12 @@ process, without sudo).
 | `-l`, `--list` | list all listening ports (optionally just the given ones) |
 | `--json` | JSON output for `--list` and for showing ports |
 | `-u`, `--udp` | include UDP sockets (unconnected sockets bound to a port) |
-
-A port can be a number (`3000`), a range (`8000-8010`) or a comma-separated
-list of either (`3000,5173`).
 | `-h`, `--help` | show help |
 | `-V`, `--version` | print the version |
+
+A port can be a number (`3000`), a range (`8000-8010`) or a comma-separated
+list of either (`3000,5173`). Flags and ports can come in any order, short
+flags combine (`-yf9`), and `--` ends the flags.
 
 ## Safety
 
@@ -123,7 +141,7 @@ portkill: no process to kill
 
 | code | meaning |
 |---|---|
-| 0 | the processes were killed and the ports are free; `--list` always exits 0 |
+| 0 | the processes were killed and the ports are free; `--list` always; `--json` and `--dry-run` when there was something to show |
 | 1 | nothing is listening on the given ports |
 | 2 | usage error, stdin isn't a terminal and `-y` wasn't given, or listing sockets failed |
 | 3 | a signal couldn't be sent, a port is still busy after `--wait`, or you answered no |
@@ -134,13 +152,27 @@ In a script, 0 and 1 both mean the port is free now:
 portkill -y 3000; [ $? -le 1 ] && npm run dev
 ```
 
-## How it works
+## Platform notes
 
-On Linux portkill reads the socket tables in `/proc/net/tcp` and
-`/proc/net/tcp6` (plus `udp` and `udp6` with `--udp`) and matches socket
-inodes against `/proc/<pid>/fd`. On macOS it runs
-`lsof -nP -iTCP -sTCP:LISTEN -F pcLnuR` (and `lsof -nP -iUDP` for UDP), parses
-the field output, and asks `ps` for full command lines.
+**Linux.** portkill reads the socket tables in `/proc/net/tcp` and
+`/proc/net/tcp6` (plus `udp` and `udp6` with `--udp`), then walks
+`/proc/<pid>/fd` to find which processes hold each socket inode, and reads
+`/proc/<pid>/cmdline` and `/proc/<pid>/status` for the command line and user.
+No external tools are needed. If `/proc` yields no sockets at all (some
+containers and sandboxes hide it) and `lsof` is installed, portkill falls
+back to lsof.
+
+**macOS.** portkill runs `lsof -nP -iTCP -sTCP:LISTEN -F pcLnuR` (and
+`lsof -nP -iUDP -F pcLnuR` with `--udp`), parses lsof's field output, and
+asks `ps` for full command lines. Without sudo lsof only sees your own
+processes, so a port held by root shows up as free; portkill points this out
+when it finds nothing. lsof prints wildcard addresses as `*:3000` for both
+IPv4 and IPv6.
+
+**Both.** Only sockets in portkill's own network namespace are visible: a
+port published by a Docker container belongs to `docker-proxy` (or the VM on
+macOS), and that is what portkill will show and kill. UDP has no listening
+state, so `--udp` reports unconnected UDP sockets bound to a port.
 
 ## License
 

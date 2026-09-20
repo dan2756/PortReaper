@@ -159,7 +159,7 @@ func (a *app) killAll(found, targets []sockets.Listener, opts *options) int {
 		}
 	}
 
-	if !a.report(watch.ports, busy, targets) {
+	if !a.report(watch.ports, found, busy, targets) {
 		ok = false
 	}
 	if !ok {
@@ -202,10 +202,15 @@ func (a *app) waitFree(opts *options, d time.Duration) ([]sockets.Listener, erro
 }
 
 // report prints one line per port and returns false if any is still busy.
-func (a *app) report(ports []int, busy, targets []sockets.Listener) bool {
+// found is what listened on the ports before any signal was sent.
+func (a *app) report(ports []int, found, busy, targets []sockets.Listener) bool {
 	signalled := map[int]bool{}
 	for _, t := range targets {
 		signalled[t.PID] = true
+	}
+	listed := map[int]bool{}
+	for _, l := range found {
+		listed[l.PID] = true
 	}
 	holders := map[int][]sockets.Listener{}
 	for _, l := range uniqueByPortPID(busy) {
@@ -226,6 +231,9 @@ func (a *app) report(ports []int, busy, targets []sockets.Listener) bool {
 				who = append(who, "a process we can't see")
 			case signalled[h.PID]:
 				who = append(who, fmt.Sprintf("%d (%s)", h.PID, h.Name))
+			case listed[h.PID]:
+				// pid 1 or portkill itself, which pickTargets refused
+				who = append(who, fmt.Sprintf("%d (%s, which portkill won't signal)", h.PID, h.Name))
 			default:
 				who = append(who, fmt.Sprintf("%d (%s, a new process; is something restarting it?)", h.PID, h.Name))
 			}

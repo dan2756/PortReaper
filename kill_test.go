@@ -189,10 +189,13 @@ func TestRefusesPID1AndSelf(t *testing.T) {
 	initd := node(1, 631)
 	initd.Name, initd.UID, initd.User = "systemd", 0, "root"
 	f := &fakeSystem{listeners: []sockets.Listener{initd, node(4242, 631), node(100, 631)}, self: 4242}
-	runFake(t, f, "", false, "-y", "-w", "20ms", "631").
-		expect(t, exitFailed, []string{"100 SIGTERM"},
-			"refusing to kill pid 1 (systemd)", "refusing to kill portkill itself (pid 4242)",
-			"port 631 is still in use by")
+	r := runFake(t, f, "", false, "-y", "-w", "20ms", "631")
+	r.expect(t, exitFailed, []string{"100 SIGTERM"},
+		"refusing to kill pid 1 (systemd)", "refusing to kill portkill itself (pid 4242)",
+		"port 631 is still in use by 1 (systemd, which portkill won't signal), 4242 (node, which portkill won't signal)")
+	if strings.Contains(r.stderr, "new process") {
+		t.Errorf("refused processes aren't new:\n%s", r.stderr)
+	}
 
 	f = &fakeSystem{listeners: []sockets.Listener{initd}}
 	runFake(t, f, "", false, "-y", "631").expect(t, exitFailed, nil, "refusing to kill pid 1", "no process to kill")

@@ -143,9 +143,26 @@ func TestParseCmdline(t *testing.T) {
 		"/usr/sbin/sshd\x00-D\x00":      "/usr/sbin/sshd -D",
 		"nginx: worker process\x00\x00": "nginx: worker process",
 		"":                              "",
+		// A process can't forge table rows or hide text with escapes.
+		"python3\x00\n1      root  tcp  127.0.0.1:41211  /sbin/init\x00": `python3 \n1      root  tcp  127.0.0.1:41211  /sbin/init`,
+		"sh\x00\x1b[8mhidden\rshown\x00":                                 `sh \x1b[8mhidden\rshown`,
 	} {
 		if got := parseCmdline([]byte(in)); got != want {
 			t.Errorf("parseCmdline(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPrintable(t *testing.T) {
+	for in, want := range map[string]string{
+		"node server.js --port 3000": "node server.js --port 3000",
+		"a\tb\x7f\u009b":             `a\tb\x7f\u009b`,
+		"evil\u202etxt.js":           `evil\u202etxt.js`,
+		"bad\xffutf8":                `bad\xffutf8`,
+		"日本語 café \\n":               "日本語 café \\n",
+	} {
+		if got := printable(in); got != want {
+			t.Errorf("printable(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

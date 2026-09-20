@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -46,31 +47,19 @@ type tableSocket struct {
 
 // Listeners implements Backend.
 func (p *Proc) Listeners(opts Options) ([]Listener, error) {
-	var socks []tableSocket
-	want := make(map[uint64]bool)
-	for _, t := range procTables {
-		if t.udp && !opts.UDP {
-			continue
-		}
-		ss, err := p.readTable(t.file, t.udp)
-		if err != nil {
-			if t.optional && errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return nil, err
-		}
-		for _, s := range ss {
-			socks = append(socks, tableSocket{s, t.proto})
-			if s.inode != 0 {
-				want[s.inode] = true
-			}
-		}
+	socks, err := p.readTables(opts)
+	if err != nil || len(socks) == 0 {
+		return nil, err
 	}
-	if len(socks) == 0 {
-		return nil, nil
+	want := make(map[uint64]bool)
+	for _, s := range socks {
+		if s.inode != 0 {
+			want[s.inode] = true
+		}
 	}
 
 	owners := p.socketOwners(want)
+	socks = p.dropClosed(socks, owners, opts)
 	users := userCache{}
 	procs := map[int]procInfo{}
 	var out []Listener
@@ -111,6 +100,50 @@ func (p *Proc) Listeners(opts Options) ([]Listener, error) {
 		}
 	}
 	return out, nil
+}
+
+// readTables reads the socket tables that opts asks for.
+func (p *Proc) readTables(opts Options) ([]tableSocket, error) {
+	var socks []tableSocket
+	for _, t := range procTables {
+		if t.udp && !opts.UDP {
+			continue
+		}
+		ss, err := p.readTable(t.file, t.udp)
+		if err != nil {
+			if t.optional && errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		for _, s := range ss {
+			socks = append(socks, tableSocket{s, t.proto})
+		}
+	}
+	return socks, nil
+}
+
+// dropClosed reads the tables again when some sockets have no owner, and
+// drops the ones that are gone by then. A process that exits while
+// socketOwners walks /proc leaves its socket in the tables read before but
+// no fd to find it by; that socket is being freed, not held by a process
+// portkill can't see.
+func (p *Proc) dropClosed(socks []tableSocket, owners map[uint64][]int, opts Options) []tableSocket {
+	orphan := func(s tableSocket) bool { return len(owners[s.inode]) == 0 }
+	if !slices.ContainsFunc(socks, orphan) {
+		return socks
+	}
+	again, err := p.readTables(opts)
+	if err != nil {
+		return socks
+	}
+	still := make(map[uint64]bool, len(again))
+	for _, s := range again {
+		still[s.inode] = true
+	}
+	return slices.DeleteFunc(socks, func(s tableSocket) bool {
+		return orphan(s) && !still[s.inode]
+	})
 }
 
 func (p *Proc) root() string {
@@ -225,7 +258,7 @@ func parseStatus(r io.Reader) procInfo {
 		val = strings.TrimSpace(val)
 		switch key {
 		case "Name":
-			info.name = val
+			info.name = printable(val)
 		case "PPid":
 			info.ppid, _ = strconv.Atoi(val)
 		case "Uid":
@@ -241,8 +274,9 @@ func parseStatus(r io.Reader) procInfo {
 }
 
 // parseCmdline turns the NUL-separated /proc/<pid>/cmdline into a single
-// space-separated string. Kernel threads have an empty cmdline.
+// space-separated string, with anything that doesn't print escaped. Kernel
+// threads have an empty cmdline.
 func parseCmdline(b []byte) string {
 	b = bytes.TrimRight(b, "\x00")
-	return strings.TrimSpace(string(bytes.ReplaceAll(b, []byte{0}, []byte{' '})))
+	return printable(strings.TrimSpace(string(bytes.ReplaceAll(b, []byte{0}, []byte{' '}))))
 }
