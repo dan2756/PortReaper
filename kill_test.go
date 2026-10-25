@@ -249,6 +249,33 @@ func TestHiddenOwner(t *testing.T) {
 	runFake(t, f, "", false, "--list").expect(t, exitOK, nil, "run with sudo to see who owns them")
 }
 
+func TestHiddenOwnersDifferentUsers(t *testing.T) {
+	root := sockets.Listener{Proto: "tcp", Addr: "0.0.0.0:22", Port: 22, UID: 0, User: "root"}
+	pg := sockets.Listener{Proto: "tcp", Addr: "127.0.0.1:5432", Port: 5432, UID: 105, User: "postgres"}
+	f := &fakeSystem{listeners: []sockets.Listener{root, pg}, euid: 1000}
+	r := runFake(t, f, "", false, "-n", "22", "5432")
+	r.expect(t, exitFailed, nil, "ports 22 and 5432 are held by other users' processes that only root can see")
+	if strings.Contains(r.stderr, "process of root") || strings.Contains(r.stderr, "process of postgres") {
+		t.Errorf("warning named one of the users:\n%s", r.stderr)
+	}
+
+	// Same user on two sockets keeps the name.
+	v6 := root
+	v6.Proto, v6.Addr = "tcp6", "[::]:22"
+	f = &fakeSystem{listeners: []sockets.Listener{root, v6}, euid: 1000}
+	r = runFake(t, f, "", false, "-n", "22")
+	if !strings.Contains(r.stderr, "port 22 is held by a process of root that only root can see") {
+		t.Errorf("same user should be named:\n%s", r.stderr)
+	}
+
+	// As root, still don't pick the first user when they differ.
+	f = &fakeSystem{listeners: []sockets.Listener{root, pg}}
+	r = runFake(t, f, "", false, "-n", "22", "5432")
+	if !strings.Contains(r.stderr, "owned by other users") || strings.Contains(r.stderr, "owned by root") {
+		t.Errorf("root warning:\n%s", r.stderr)
+	}
+}
+
 func TestParseSignal(t *testing.T) {
 	for in, want := range map[string]syscall.Signal{
 		"TERM": syscall.SIGTERM, "sigkill": syscall.SIGKILL, "Int": syscall.SIGINT,
