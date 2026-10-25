@@ -94,17 +94,39 @@ func (a *app) pickTargets(found []sockets.Listener) []sockets.Listener {
 		}
 	}
 	if ports := portsOf(hidden); len(ports) > 0 {
-		owner := "another user"
-		if u := hidden[0].User; u != "" {
-			owner = u
-		}
-		if a.euid != 0 {
+		// One sshd on IPv4 and IPv6 is one user. A mix (sshd and postgres)
+		// must not be described as belonging to whichever came first.
+		owner, mixed := commonUser(hidden)
+		switch {
+		case a.euid != 0 && mixed:
+			a.warnf("%s held by other users' processes that only root can see; try again with sudo", isAre(ports))
+		case a.euid != 0:
 			a.warnf("%s held by a process of %s that only root can see; try again with sudo", isAre(ports), owner)
-		} else {
+		case mixed:
+			a.warnf("%s held by processes portkill can't see (owned by other users); they may be in another pid namespace", isAre(ports))
+		default:
 			a.warnf("%s held by a process portkill can't see (owned by %s); it may be in another pid namespace", isAre(ports), owner)
 		}
 	}
 	return out
+}
+
+// commonUser returns the user that owns every listener. mixed is true when
+// the names differ. An empty name stays "another user", as before.
+func commonUser(ls []sockets.Listener) (owner string, mixed bool) {
+	if len(ls) == 0 {
+		return "another user", false
+	}
+	owner = ls[0].User
+	for _, l := range ls[1:] {
+		if l.User != owner {
+			return "", true
+		}
+	}
+	if owner == "" {
+		return "another user", false
+	}
+	return owner, false
 }
 
 // killAll signals the targets, waits for the ports in found to be released
