@@ -24,8 +24,10 @@ func (l *Lsof) Name() string { return "lsof" }
 // sockets of the current user's processes.
 func (l *Lsof) HidesOtherUsers() bool { return true }
 
-// lsofFields asks for pid, command, login, name, uid and parent pid.
-const lsofFields = "pcLnuR"
+// lsofFields asks for pid, command, login, file type, name, uid and parent pid.
+// The type field is what distinguishes an IPv4 wildcard ("*:22") from an
+// IPv6 one, which lsof prints the same way.
+const lsofFields = "pcLnuRt"
 
 // Listeners implements Backend.
 func (l *Lsof) Listeners(opts Options) ([]Listener, error) {
@@ -91,8 +93,9 @@ func (l *Lsof) run(selection ...string) ([]byte, error) {
 // to every file ('f'/'n' lines) up to the next 'p'.
 func parseLsof(r io.Reader, proto string) ([]Listener, error) {
 	var (
-		out []Listener
-		cur Listener
+		out      []Listener
+		cur      Listener
+		fileType string // lsof's t field for the current file: "IPv4" or "IPv6"
 	)
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
@@ -108,6 +111,7 @@ func parseLsof(r io.Reader, proto string) ([]Listener, error) {
 				return nil, fmt.Errorf("lsof: bad pid %q", val)
 			}
 			cur = Listener{PID: pid, UID: -1}
+			fileType = ""
 		case 'R':
 			cur.PPID, _ = strconv.Atoi(val)
 		case 'c':
@@ -118,21 +122,31 @@ func parseLsof(r io.Reader, proto string) ([]Listener, error) {
 			if uid, err := strconv.Atoi(val); err == nil {
 				cur.UID = uid
 			}
+		case 't':
+			fileType = val
 		case 'n':
 			if cur.PID == 0 {
 				return nil, fmt.Errorf("lsof: file %q before any process", val)
 			}
 			port, ok := lsofPort(val)
 			if !ok {
+				fileType = ""
 				continue
 			}
 			l := cur
 			l.Addr = val
 			l.Port = port
 			l.Proto = proto
-			if strings.HasPrefix(val, "[") {
+			// Prefer the file type. Without it (older output), an address
+			// in brackets is IPv6; a wildcard "*:port" is ambiguous and
+			// stays the base protocol.
+			switch {
+			case fileType == "IPv6":
+				l.Proto += "6"
+			case fileType == "" && strings.HasPrefix(val, "["):
 				l.Proto += "6"
 			}
+			fileType = ""
 			if l.User == "" && l.UID >= 0 {
 				l.User = strconv.Itoa(l.UID)
 			}
