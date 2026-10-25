@@ -20,11 +20,17 @@ type fakeSystem struct {
 	sent      []string     // "pid SIGNAME" in order
 	stubborn  map[int]bool // ignore everything but SIGKILL
 	denied    map[int]bool // kill fails with EPERM
-	euid      int          // who portkill runs as; root unless set
-	self      int          // portkill's own pid
+	fail      map[int]error
+	vanished  map[int]bool             // still listed, but gone before the signal
+	successor map[int]sockets.Listener // replaces the process when it is signalled
+	hides     bool                     // other users' sockets are invisible
+	euid      int                      // who portkill runs as; root unless set
+	self      int                      // portkill's own pid
 }
 
 func (f *fakeSystem) Name() string { return "fake" }
+
+func (f *fakeSystem) HidesOtherUsers() bool { return f.hides }
 
 func (f *fakeSystem) Listeners(sockets.Options) ([]sockets.Listener, error) {
 	f.mu.Lock()
@@ -38,6 +44,13 @@ func (f *fakeSystem) kill(pid int, sig syscall.Signal) error {
 	if f.denied[pid] {
 		return syscall.EPERM
 	}
+	if err := f.fail[pid]; err != nil {
+		return err
+	}
+	if f.vanished[pid] {
+		f.dropLocked(pid)
+		return syscall.ESRCH
+	}
 	alive := false
 	for _, l := range f.listeners {
 		alive = alive || l.PID == pid
@@ -49,6 +62,15 @@ func (f *fakeSystem) kill(pid int, sig syscall.Signal) error {
 	if sig != syscall.SIGKILL && f.stubborn[pid] {
 		return nil
 	}
+	next, replaced := f.successor[pid]
+	f.dropLocked(pid)
+	if replaced && sig != syscall.SIGKILL {
+		f.listeners = append(f.listeners, next)
+	}
+	return nil
+}
+
+func (f *fakeSystem) dropLocked(pid int) {
 	kept := f.listeners[:0]
 	for _, l := range f.listeners {
 		if l.PID != pid {
@@ -56,7 +78,6 @@ func (f *fakeSystem) kill(pid int, sig syscall.Signal) error {
 		}
 	}
 	f.listeners = kept
-	return nil
 }
 
 type result struct {
@@ -291,6 +312,52 @@ func TestHiddenOwnersDifferentUsers(t *testing.T) {
 	if !strings.Contains(r.stderr, "owned by other users") || strings.Contains(r.stderr, "owned by root") {
 		t.Errorf("root warning:\n%s", r.stderr)
 	}
+}
+
+func TestAlreadyExited(t *testing.T) {
+	f := &fakeSystem{listeners: []sockets.Listener{node(100, 3000)}, vanished: map[int]bool{100: true}}
+	runFake(t, f, "", false, "-y", "3000").
+		expect(t, exitOK, nil, "100 (node) already exited", "port 3000 is free")
+}
+
+func TestRestartedProcessIsNotForceKilled(t *testing.T) {
+	f := &fakeSystem{
+		listeners: []sockets.Listener{node(100, 3000)},
+		successor: map[int]sockets.Listener{100: node(200, 3000)},
+	}
+	r := runFake(t, f, "", false, "-yf", "-w", "20ms", "3000")
+	r.expect(t, exitFailed, []string{"100 SIGTERM"},
+		"port 3000 is still in use by 200 (node, a new process; is something restarting it?)")
+	if strings.Contains(r.stdout+r.stderr, "SIGKILL") {
+		t.Errorf("the new process should not be signalled:\n%s%s", r.stdout, r.stderr)
+	}
+}
+
+func TestHiddenHolderStaysBusy(t *testing.T) {
+	hidden := sockets.Listener{Proto: "tcp", Addr: "0.0.0.0:22", Port: 22, UID: 0, User: "root"}
+	f := &fakeSystem{listeners: []sockets.Listener{hidden, node(100, 3000)}, euid: 1000}
+	runFake(t, f, "", false, "-y", "-w", "20ms", "22", "3000").
+		expect(t, exitFailed, []string{"100 SIGTERM"},
+			"port 3000 is free", "port 22 is still in use by a process we can't see")
+}
+
+func TestHintsWhenBackendHidesOtherUsers(t *testing.T) {
+	f := &fakeSystem{listeners: []sockets.Listener{node(100, 3000)}, euid: 1000, hides: true}
+	runFake(t, f, "", false, "22").
+		expect(t, exitNotFound, nil, "nothing listening on port 22",
+			"other users' processes are only visible with sudo")
+
+	f = &fakeSystem{hides: true} // root
+	r := runFake(t, f, "", false, "22")
+	if r.code != exitNotFound || strings.Contains(r.stderr, "sudo") {
+		t.Errorf("root should not be sent to sudo:\n%s", r.stderr)
+	}
+}
+
+func TestKillUnexpectedError(t *testing.T) {
+	f := &fakeSystem{listeners: []sockets.Listener{node(100, 3000)}, fail: map[int]error{100: syscall.EINVAL}}
+	runFake(t, f, "", false, "-y", "3000").
+		expect(t, exitFailed, nil, "sending SIGTERM to 100 (node): invalid argument")
 }
 
 func TestParseSignal(t *testing.T) {
