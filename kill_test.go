@@ -105,6 +105,23 @@ func (r result) expect(t *testing.T, code int, sent []string, stdout ...string) 
 	}
 }
 
+func TestHelpExitStatus(t *testing.T) {
+	r := runFake(t, &fakeSystem{}, "", false, "--help")
+	if r.code != exitOK {
+		t.Fatalf("exit %d\n%s", r.code, r.stderr)
+	}
+	for _, s := range []string{
+		"--wait 0 (without --force)",
+		"--json and --dry-run",
+		"stdin isn't a terminal",
+		"required when stdin isn't a terminal",
+	} {
+		if !strings.Contains(r.stdout, s) {
+			t.Errorf("help missing %q\n%s", s, r.stdout)
+		}
+	}
+}
+
 func TestKillFreesPort(t *testing.T) {
 	f := &fakeSystem{listeners: []sockets.Listener{node(100, 3000), node(200, 8080)}}
 	runFake(t, f, "", false, "-y", "3000").

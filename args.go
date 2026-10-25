@@ -20,7 +20,7 @@ sending them SIGTERM and waits for the ports to be released. A PORT is a
 number (3000), a range (8000-8010) or a comma-separated list of either.
 
 flags:
-  -y, --yes          don't ask for confirmation
+  -y, --yes          don't ask; required when stdin isn't a terminal
   -s, --signal SIG   signal to send: TERM (default), INT, HUP, QUIT, KILL, USR1, USR2
   -9                 same as --signal KILL
   -w, --wait DUR     how long to wait for the ports to be free (default 3s; 0 = don't)
@@ -33,9 +33,12 @@ flags:
   -V, --version      print the version
 
 exit status:
-  0  the processes were killed and the ports are free (always for --list)
+  0  ports are free after a kill; --wait 0 (without --force) exits after
+     sending without checking; --list always; --json and --dry-run when
+     there was something to show
   1  nothing is listening on the ports
-  2  usage error, or listing sockets failed
+  2  usage error, stdin isn't a terminal and -y wasn't given, or listing
+     sockets failed
   3  a kill failed, a port is still busy, or you answered no
 `
 

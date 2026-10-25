@@ -17,7 +17,7 @@ import (
 
 // Exit codes.
 const (
-	exitOK       = 0 // processes killed and the ports are free; or nothing to do with --list
+	exitOK       = 0 // ports are free, or --list / --json / --dry-run had something to show; --wait 0 does not check
 	exitNotFound = 1 // nothing listening on the ports
 	exitUsage    = 2 // bad arguments or the backend failed
 	exitFailed   = 3 // a kill failed, a port is still busy, or the user said no

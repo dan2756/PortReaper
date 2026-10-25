@@ -141,7 +141,7 @@ portkill: no process to kill
 
 | code | meaning |
 |---|---|
-| 0 | the processes were killed and the ports are free; `--list` always; `--json` and `--dry-run` when there was something to show |
+| 0 | the processes were killed and the ports are free; `--wait 0` without `--force` exits after a successful signal without checking; `--list` always; `--json` and `--dry-run` when there was something to show |
 | 1 | nothing is listening on the given ports |
 | 2 | usage error, stdin isn't a terminal and `-y` wasn't given, or listing sockets failed |
 | 3 | a signal couldn't be sent, a port is still busy after `--wait`, or you answered no |
