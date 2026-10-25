@@ -162,12 +162,13 @@ No external tools are needed. If `/proc` yields no sockets at all (some
 containers and sandboxes hide it) and `lsof` is installed, portkill falls
 back to lsof.
 
-**macOS.** portkill runs `lsof -nP -iTCP -sTCP:LISTEN -F pcLnuR` (and
-`lsof -nP -iUDP -F pcLnuR` with `--udp`), parses lsof's field output, and
+**macOS.** portkill runs `lsof -nP -iTCP -sTCP:LISTEN -F pcLnuRt` (and
+`lsof -nP -iUDP -F pcLnuRt` with `--udp`), parses lsof's field output, and
 asks `ps` for full command lines. Without sudo lsof only sees your own
 processes, so a port held by root shows up as free; portkill points this out
 when it finds nothing. lsof prints wildcard addresses as `*:3000` for both
-IPv4 and IPv6.
+IPv4 and IPv6; the file type field says which, so those show up as `tcp`
+and `tcp6` (and the same for UDP). The Linux lsof fallback does this too.
 
 **Both.** Only sockets in portkill's own network namespace are visible: a
 port published by a Docker container belongs to `docker-proxy` (or the VM on

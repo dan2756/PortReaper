@@ -71,6 +71,36 @@ func TestParseLsofLinux(t *testing.T) {
 	})
 }
 
+func TestParseLsofFileType(t *testing.T) {
+	// lsof prints both wildcard families as "*:22". The t field is what
+	// separates them. A file without a t field still uses the brackets.
+	in := "p812\nR1\ncsshd\nu0\nLroot\ntIPv4\nn*:22\ntIPv6\nn*:22\n" +
+		"p7\ncnginx\ntIPv6\nn[::1]:80\n" +
+		"p9\ncnode\ntIPv6\nn*:5353\nn127.0.0.1:5353\n"
+	ls, err := parseLsof(strings.NewReader(in), "tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkRows(t, ls, []string{
+		"812/1 root(0) sshd tcp *:22 22",
+		"812/1 root(0) sshd tcp6 *:22 22",
+		"7/0 (-1) nginx tcp6 [::1]:80 80",
+		"9/0 (-1) node tcp6 *:5353 5353",
+		"9/0 (-1) node tcp 127.0.0.1:5353 5353",
+	})
+
+	udp, err := parseLsof(strings.NewReader("p3\ncnamed\ntIPv6\nn*:53\n"), "udp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(udp) != 1 || udp[0].Proto != "udp6" || udp[0].Port != 53 {
+		t.Errorf("udp = %+v, want udp6 port 53", udp)
+	}
+	if !strings.Contains(lsofFields, "t") {
+		t.Errorf("lsof -F %q does not ask for the file type", lsofFields)
+	}
+}
+
 func TestParseLsofCommandDefaultsToName(t *testing.T) {
 	ls, err := parseLsof(strings.NewReader("p7\ncnginx\nn*:80\n"), "tcp")
 	if err != nil {
