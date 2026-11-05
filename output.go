@@ -170,6 +170,9 @@ func printJSON(w io.Writer, ls []sockets.Listener) error {
 		out = append(out, j)
 	}
 	enc := json.NewEncoder(w)
+	// Command lines are for scripts and terminals, not HTML. Leave &, < and >
+	// as themselves so "a && b" doesn't show up as "a \u0026\u0026 b".
+	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
 }

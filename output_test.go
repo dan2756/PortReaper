@@ -136,3 +136,29 @@ func TestPrintJSON(t *testing.T) {
 		t.Errorf("empty list = %q, want []", b.String())
 	}
 }
+
+func TestPrintJSONDoesNotHTMLEscape(t *testing.T) {
+	cmd := "sh -c 'echo a && echo b <in >out'"
+	var b bytes.Buffer
+	if err := printJSON(&b, []sockets.Listener{
+		{Port: 3000, Proto: "tcp", Addr: "127.0.0.1:3000", PID: 7, UID: 1000, User: "dj", Name: "sh", Command: cmd},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw := b.String()
+	for _, esc := range []string{`\u0026`, `\u003c`, `\u003e`} {
+		if strings.Contains(raw, esc) {
+			t.Fatalf("JSON HTML-escaped %s:\n%s", esc, raw)
+		}
+	}
+	if !strings.Contains(raw, cmd) {
+		t.Fatalf("command not preserved:\n%s", raw)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(b.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, raw)
+	}
+	if len(got) != 1 || got[0]["command"] != cmd {
+		t.Fatalf("unmarshaled command = %#v", got)
+	}
+}
