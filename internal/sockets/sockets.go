@@ -19,15 +19,20 @@ import (
 // per process. Name and Command are chosen by the process itself, so
 // backends escape whatever in them doesn't print (see printable).
 type Listener struct {
-	Proto   string // "tcp", "tcp6", "udp" or "udp6"
-	Addr    string // local address including the port: "127.0.0.1:3000", "[::]:3000", "*:3000"
-	Port    int
-	PID     int // 0 when the owning process isn't visible to us
-	PPID    int // 0 when unknown
-	UID     int // -1 when unknown
-	User    string
-	Name    string // short process name
-	Command string // full command line where available, otherwise Name
+	Proto string // "tcp", "tcp6", "udp" or "udp6"
+	Addr  string // local address including the port: "127.0.0.1:3000", "[::]:3000", "*:3000"
+	Port  int
+	PID   int // 0 when the owning process isn't visible to us
+	PPID  int // 0 when unknown
+	UID   int // -1 when unknown
+	// StartTicks is the process start time from /proc/<pid>/stat, in clock
+	// ticks since boot. HasStart distinguishes a real start time of 0 (the
+	// process began at boot) from "this backend doesn't know".
+	StartTicks uint64
+	HasStart   bool
+	User       string
+	Name       string // short process name
+	Command    string // full command line where available, otherwise Name
 }
 
 // Options select which sockets a Backend reports.

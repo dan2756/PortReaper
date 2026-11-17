@@ -122,6 +122,8 @@ flags combine (`-yf9`), and `--` ends the flags.
   refuses instead of hanging; pass `-y` in scripts.
 - It never signals pid 1 (`systemd` or `launchd` holding a socket for a
   socket-activated service; stop the service instead) or itself.
+- On Linux it remembers when each process started, and will not signal a
+  pid that a different process has taken over since the listing.
 - It warns when a process belongs to another user, and when a signal fails
   with a permission error it says so and suggests sudo.
 - Without root you can't see who owns other users' sockets. On Linux the

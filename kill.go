@@ -14,6 +14,10 @@ import (
 // which the kernel acts on right away.
 const killGrace = time.Second
 
+// errPIDReused means the pid we listed has since been taken by another
+// process. Signalling it would hit that new process.
+var errPIDReused = errors.New("pid reused")
+
 var signals = []struct {
 	name string
 	sig  syscall.Signal
@@ -193,10 +197,20 @@ func (a *app) killAll(found, targets []sockets.Listener, opts *options) int {
 // send delivers sig to t and says what happened. It returns false when the
 // signal couldn't be delivered.
 func (a *app) send(t sockets.Listener, sig syscall.Signal) bool {
-	err := a.kill(t.PID, sig)
+	var err error
+	if t.HasStart {
+		// The start time pins the process we listed. A plain kill(pid) can
+		// hit whatever has that pid now.
+		err = signalIfSame(t.PID, t.StartTicks, sig)
+	} else {
+		err = a.kill(t.PID, sig)
+	}
 	switch {
 	case err == nil:
 		fmt.Fprintf(a.stdout, "sent %s to %d (%s)\n", signalName(sig), t.PID, t.Name)
+		return true
+	case errors.Is(err, errPIDReused):
+		fmt.Fprintf(a.stdout, "not signalling %d (%s); that pid belongs to a different process now\n", t.PID, t.Name)
 		return true
 	case errors.Is(err, syscall.ESRCH):
 		fmt.Fprintf(a.stdout, "%d (%s) already exited\n", t.PID, t.Name)

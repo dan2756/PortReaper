@@ -96,6 +96,8 @@ func (p *Proc) Listeners(opts Options) ([]Listener, error) {
 				l.UID = info.uid
 			}
 			l.User = users.name(l.UID)
+			l.StartTicks = info.start
+			l.HasStart = info.hasStart
 			out = append(out, l)
 		}
 	}
@@ -226,10 +228,12 @@ func socketInode(link string) (uint64, bool) {
 }
 
 type procInfo struct {
-	name    string
-	cmdline string
-	ppid    int
-	uid     int
+	name     string
+	cmdline  string
+	ppid     int
+	uid      int
+	start    uint64
+	hasStart bool
 }
 
 func (p *Proc) process(pid int) procInfo {
@@ -242,7 +246,35 @@ func (p *Proc) process(pid int) procInfo {
 	if b, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
 		info.cmdline = parseCmdline(b)
 	}
+	if b, err := os.ReadFile(filepath.Join(dir, "stat")); err == nil {
+		if start, ok := ParseProcStatStart(b); ok {
+			info.start = start
+			info.hasStart = true
+		}
+	}
 	return info
+}
+
+// ParseProcStatStart returns the starttime field of a /proc/<pid>/stat
+// file, in clock ticks since boot. The comm field is wrapped in parentheses
+// and may itself contain spaces and parentheses, so the fields after the
+// last ")" are what count: the first of those is state (field 3) and
+// starttime is field 22.
+func ParseProcStatStart(b []byte) (uint64, bool) {
+	r := bytes.LastIndexByte(b, ')')
+	if r < 0 || r+2 >= len(b) {
+		return 0, false
+	}
+	fields := bytes.Fields(b[r+2:])
+	const startIndex = 22 - 3 // field 22, with field 3 at index 0
+	if len(fields) <= startIndex {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(string(fields[startIndex]), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // parseStatus pulls the process name, parent pid and effective uid out of
