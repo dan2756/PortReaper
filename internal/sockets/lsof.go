@@ -70,22 +70,52 @@ func (l *Lsof) run(selection ...string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	if err != nil {
-		// lsof exits 1 when nothing matched the selection.
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && ee.ExitCode() == 1 && len(bytes.TrimSpace(out)) == 0 {
+	return lsofCommandResult(out, stderr.String(), err)
+}
+
+// lsofCommandResult interprets an lsof invocation.
+//
+// Exit status 1 means either "nothing matched" or "I printed what I could
+// but also hit an error" (a filesystem it couldn't stat, a name it was
+// asked for and didn't find). An empty status-1 result is an empty
+// listing. A status-1 result that is still field output is the listing;
+// discarding it would hide every socket the command did find. Anything
+// else is a real failure.
+func lsofCommandResult(out []byte, stderr string, err error) ([]byte, error) {
+	if err == nil {
+		return out, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		if len(bytes.TrimSpace(out)) == 0 {
 			return nil, nil
 		}
-		msg := strings.TrimSpace(stderr.String())
-		if i := strings.IndexByte(msg, '\n'); i >= 0 {
-			msg = msg[:i]
+		if lsofFieldOutput(out) {
+			return out, nil
 		}
-		if msg != "" {
-			return nil, fmt.Errorf("lsof: %v: %s", err, msg)
-		}
-		return nil, fmt.Errorf("lsof: %v", err)
 	}
-	return out, nil
+	msg := strings.TrimSpace(stderr)
+	if i := strings.IndexByte(msg, '\n'); i >= 0 {
+		msg = msg[:i]
+	}
+	if msg != "" {
+		return nil, fmt.Errorf("lsof: %v: %s", err, msg)
+	}
+	return nil, fmt.Errorf("lsof: %v", err)
+}
+
+// lsofFieldOutput reports whether out is lsof -F output rather than an
+// error message that happened to be written to stdout. A process record
+// starts with "p" and a pid.
+func lsofFieldOutput(out []byte) bool {
+	for _, line := range bytes.Split(out, []byte{'\n'}) {
+		if len(line) > 1 && line[0] == 'p' {
+			if _, err := strconv.Atoi(string(line[1:])); err == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // parseLsof parses lsof -F output. Each line starts with a field letter;
