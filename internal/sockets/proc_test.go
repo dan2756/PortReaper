@@ -48,6 +48,9 @@ func fakeProc(t *testing.T) string {
 	// node holds 127.0.0.1:3000 on two fds, plus some unrelated files.
 	write("48213/status", "Name:\tnode\nPPid:\t48190\nUid:\t1000\t1000\t1000\t1000\n")
 	write("48213/cmdline", "node\x00server.js\x00--port\x003000\x00")
+	// starttime is field 22. The comm is in parentheses; the token after the
+	// last ")" is field 3, so 4242 sits at index 19 of what follows.
+	write("48213/stat", "48213 (node) S 48190 48213 48213 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 4242\n")
 	fds(48213, "/dev/null", "pipe:[99]", "socket:[418877]", "socket:[418877]", "socket:[419102]")
 
 	// Two resolved processes sharing the same listening socket.
@@ -85,6 +88,41 @@ func TestProcBackend(t *testing.T) {
 		if l.UID == 0 && l.User != "root" {
 			t.Errorf("uid 0 should resolve to root, got %q", l.User)
 		}
+		switch l.PID {
+		case 48213:
+			if !l.HasStart || l.StartTicks != 4242 {
+				t.Errorf("node start = %d (known %v), want 4242", l.StartTicks, l.HasStart)
+			}
+		case 900, 901:
+			if l.HasStart {
+				t.Errorf("pid %d has no stat file, HasStart = true", l.PID)
+			}
+		}
+	}
+}
+
+func TestParseProcStatStart(t *testing.T) {
+	// 20 tokens after the comm: state is field 3, starttime is field 22.
+	const after = "S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 424242"
+	for _, in := range []string{
+		"99 (node) " + after + "\n",
+		"99 (node (worker)) " + after + " 999 extra\n",
+		"99 (weird) name) " + after + "\n",
+	} {
+		got, ok := ParseProcStatStart([]byte(in))
+		if !ok || got != 424242 {
+			t.Errorf("ParseProcStatStart(%q) = %d, %v; want 424242, true", in, got, ok)
+		}
+	}
+	for _, in := range []string{"", "99 node S 1", "99 (node) S 1 2\n", "99 (node) S " + "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 no"} {
+		if _, ok := ParseProcStatStart([]byte(in)); ok {
+			t.Errorf("ParseProcStatStart(%q) should fail", in)
+		}
+	}
+	// A start time of 0 is real (the process began at boot), not "unknown".
+	got, ok := ParseProcStatStart([]byte("1 (init) S 0 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 0\n"))
+	if !ok || got != 0 {
+		t.Errorf("start time 0 = %d, %v; want 0, true", got, ok)
 	}
 }
 

@@ -58,6 +58,14 @@ func TestProcFindsOwnTCPListener(t *testing.T) {
 	if exe := filepath.Base(os.Args[0]); !strings.Contains(l.Command, exe) {
 		t.Errorf("command %q doesn't mention %s", l.Command, exe)
 	}
+	b, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, ok := ParseProcStatStart(b)
+	if !ok || !l.HasStart || l.StartTicks != start {
+		t.Errorf("start ticks = %d (known %v), want %d", l.StartTicks, l.HasStart, start)
+	}
 }
 
 func TestProcFindsOwnTCP6Listener(t *testing.T) {
