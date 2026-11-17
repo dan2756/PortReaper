@@ -3,6 +3,8 @@ package sockets
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -138,6 +140,50 @@ func TestLsofPort(t *testing.T) {
 		if ok != (want != 0) || got != want {
 			t.Errorf("lsofPort(%q) = %d, %v; want %d", name, got, ok, want)
 		}
+	}
+}
+
+func TestLsofCommandResult(t *testing.T) {
+	fields := []byte("p2147483001\nR1\ncnginx\nu1000\nLdj\ntIPv4\nn127.0.0.1:8080\n")
+	exit1 := exec.Command("false").Run()
+	exit2 := exec.Command("sh", "-c", "exit 2").Run()
+
+	out, err := lsofCommandResult(fields, "lsof: WARNING: can't stat() overlay\n", exit1)
+	if err != nil || string(out) != string(fields) {
+		t.Fatalf("status 1 with a listing = %q, %v", out, err)
+	}
+	out, err = lsofCommandResult(nil, "", exit1)
+	if err != nil || len(out) != 0 {
+		t.Fatalf("status 1 with no output = %q, %v; want an empty listing", out, err)
+	}
+	if _, err := lsofCommandResult([]byte("lsof: broken\n"), "lsof: broken\n", exit1); err == nil {
+		t.Fatal("status 1 with a plain error on stdout should fail")
+	}
+	if _, err := lsofCommandResult(fields, "lsof: bad", exit2); err == nil {
+		t.Fatal("status 2 should fail even when stdout looks like fields")
+	}
+	out, err = lsofCommandResult(fields, "", nil)
+	if err != nil || string(out) != string(fields) {
+		t.Fatalf("status 0 = %q, %v", out, err)
+	}
+}
+
+func TestLsofKeepsListingWhenCommandExits1(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lsof")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' 'p2147483001' 'R1' 'cnginx' 'u1000' 'Ldj' 'tIPv4' 'n127.0.0.1:8080'\n" +
+		"echo \"lsof: WARNING: can't stat() overlay\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ls, err := (&Lsof{Path: path}).Listeners(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ls) != 1 || ls[0].PID != 2147483001 || ls[0].Port != 8080 || ls[0].Proto != "tcp" {
+		t.Fatalf("got %+v", ls)
 	}
 }
 
